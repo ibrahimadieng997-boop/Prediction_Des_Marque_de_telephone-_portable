@@ -133,239 +133,465 @@
 #             )
 #         except Exception as e:
 #             st.error(f"Erreur lors du traitement du fichier : {e}")
-import gradio as gr
-import pandas as pd
-import numpy as np
-import joblib as jb
-import plotly.express as px
+"""
+Application Streamlit — Prédiction de l'état d'un portable
+Version améliorée : design responsive (rouge foncé / chocolat),
+indicateurs, graphique camembert et tableau des scores.
 
-# --- CHARGEMENT DES OBJETS ENTRAÎNÉS ---
-# Ces 4 fichiers doivent être dans le même dossier que ce script.
-encoders = jb.load('encoders.joblib')   # encoders[0] = adresse, encoders[1] = marque
-uniques = jb.load('uniques.joblib')     # uniques[0] = adresses, uniques[1] = marques, uniques[2] = classnames
-scaler = jb.load('scaler.joblib')
-rf = jb.load('rf_model.joblib')
-
-clasnames = uniques[2]
-
-FEATURE_NAMES = ['Prix', 'Adresse', 'Marque', 'Écran', 'RAM', 'Stockage']
-
-
-# --- FONCTION DE PRÉDICTION UNIQUE ---
-def predict_one(prix, adresse, marque, ecran, ram, stockage):
-    """Retourne (etat_predit, confiance_%) pour une observation."""
-    adresse_enc = encoders[0].transform([adresse])[0]
-    marque_enc = encoders[1].transform([marque])[0]
-
-    x_new = np.array([prix, adresse_enc, marque_enc, ecran, ram, stockage], dtype=float)
-    x_new = x_new.reshape(1, -1)
-    x_new = scaler.transform(x_new)
-
-    y_pred = rf.predict(x_new)[0]
-    proba = rf.predict_proba(x_new)[0]
-    confiance = round(float(np.max(proba)) * 100, 1)
-    etat_predit = clasnames[y_pred]
-
-    return etat_predit, confiance
-
-
-# --- CALLBACK GRADIO : ONGLET PRÉDICTION UNIQUE ---
-def Pred_func(prix, adresse, marque, ecran, ram, stockage):
-    etat_predit, confiance = predict_one(prix, adresse, marque, ecran, ram, stockage)
-
-    # Score du modèle en général (accuracy sur le train/test), à adapter si tu l'as stocké quelque part.
-    # Ici on affiche la confiance du modèle sur cette prédiction précise à la place.
-    kpi_html = f"""
-    <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-        <div style="flex: 1; min-width: 180px; background: #3B0A11; color: #FFFFFF; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); text-align: center; border-bottom: 4px solid #D4AF37;">
-            <div style="font-size: 24px; margin-bottom: 5px;">📱</div>
-            <div style="font-size: 11px; text-transform: uppercase; color: #FFFFFF; font-weight: bold; letter-spacing: 0.5px;">État Prédit</div>
-            <div style="font-size: 20px; font-weight: bold; color: #FFFFFF; margin-top: 5px;">{etat_predit}</div>
-        </div>
-        <div style="flex: 1; min-width: 180px; background: #5C131D; color: #FFFFFF; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); text-align: center; border-bottom: 4px solid #C0392B;">
-            <div style="font-size: 24px; margin-bottom: 5px;">⚡</div>
-            <div style="font-size: 11px; text-transform: uppercase; color: #FFFFFF; font-weight: bold; letter-spacing: 0.5px;">Confiance</div>
-            <div style="font-size: 20px; font-weight: bold; color: #FFFFFF; margin-top: 5px;">{confiance}%</div>
-        </div>
-    </div>
-    """
-
-    importance_data = {
-        'Variable': FEATURE_NAMES,
-        'Poids (%)': (rf.feature_importances_ * 100).round(1)
-    }
-
-    chocolat_rouge_palette = ['#2D080D', '#3B0A11', '#4A0E17', '#5C131D', '#7A1C28', '#9E2A2B']
-
-    fig_pie = px.pie(
-        importance_data,
-        values='Poids (%)',
-        names='Variable',
-        title="Importance relative des variables dans la prédiction",
-        color_discrete_sequence=chocolat_rouge_palette
-    )
-    fig_pie.update_layout(
-        margin=dict(t=40, b=10, l=10, r=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        title_font=dict(color="#3B0A11", size=14)
-    )
-
-    df_recap = pd.DataFrame({
-        "Caractéristique": ["Prix", "Adresse", "Marque", "Dimension Écran", "RAM", "Stockage", "Prédiction", "Score Confiance"],
-        "Valeur": [f"{prix} CFA", str(adresse), str(marque), f"{ecran} pouces", f"{ram} Go", f"{stockage} Go", etat_predit, f"{confiance}%"]
-    })
-
-    return kpi_html, fig_pie, df_recap
-
-
-# --- CALLBACK GRADIO : ONGLET PRÉDICTION PAR LOT (CSV) ---
-def Pred_func_csv(file):
-    # Avec type="filepath", `file` est directement un chemin (str)
-    df = pd.read_csv(file)
-
-    etats = []
-    confiances = []
-    for row in df.iloc[:, :6].values:
-        etat, conf = predict_one(row[0], row[1], row[2], row[3], row[4], row[5])
-        etats.append(etat)
-        confiances.append(f"{conf}%")
-
-    df['Etat_Predit'] = etats
-    df['Score_Confiance'] = confiances
-
-    output_path = "predictions_resultats.csv"
-    df.to_csv(output_path, index=False)
-
-    kpi_batch = f"""
-    <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-        <div style="flex: 1; min-width: 180px; background: #3B0A11; color: #FFFFFF; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 4px solid #D4AF37;">
-            <div style="font-size: 24px;">📁</div>
-            <div style="font-size: 11px; text-transform: uppercase; color: #FFFFFF; font-weight: bold;">Lignes traitées</div>
-            <div style="font-size: 20px; font-weight: bold; color: #FFFFFF; margin-top: 5px;">{len(df)}</div>
-        </div>
-        <div style="flex: 1; min-width: 180px; background: #4A0E17; color: #FFFFFF; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 4px solid #27AE60;">
-            <div style="font-size: 24px;">✅</div>
-            <div style="font-size: 11px; text-transform: uppercase; color: #FFFFFF; font-weight: bold;">Statut</div>
-            <div style="font-size: 20px; font-weight: bold; color: #FFFFFF; margin-top: 5px;">Succès</div>
-        </div>
-    </div>
-    """
-
-    return output_path, df.head(5), kpi_batch
-
-
-# --- STYLES CSS SUR MESURE ---
-custom_css = """
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #FAFAFA;
-}
-
-.header-box {
-    text-align: center;
-    padding: 24px;
-    background: linear-gradient(135deg, #1A0306 0%, #3B0A11 50%, #5C131D 100%);
-    border-radius: 12px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 12px rgba(45, 8, 13, 0.4);
-}
-
-.header-box h1 {
-    color: #FFFFFF !important;
-    font-size: 24px !important;
-    font-weight: 700 !important;
-    margin-bottom: 8px !important;
-}
-.header-box p {
-    color: #FFFFFF !important;
-    font-size: 14px !important;
-}
-
-.gradio-container h3 {
-    color: #3B0A11 !important;
-    font-weight: 700 !important;
-    border-bottom: 2px solid #5C131D;
-    padding-bottom: 6px;
-    margin-bottom: 12px;
-}
-
-button.primary-btn, button.primary {
-    background: linear-gradient(135deg, #3B0A11 0%, #5C131D 100%) !important;
-    border: none !important;
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
-    border-radius: 8px !important;
-    transition: all 0.3s ease !important;
-}
-
-button.primary-btn:hover, button.primary:hover {
-    background: linear-gradient(135deg, #4A0E17 0%, #7A1C28 100%) !important;
-    box-shadow: 0 4px 10px rgba(59, 10, 17, 0.5) !important;
-}
+Lancement en local :  streamlit run app.py
 """
 
-# uniques[0] = liste des adresses possibles, uniques[1] = liste des marques possibles
-adresses_choix = list(uniques[0])
-marques_choix = list(uniques[1])
+import numpy as np
+import pandas as pd
+import joblib as jb
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
-# --- STRUCTURE GRADIO BLOCKS ---
-with gr.Blocks(theme=gr.themes.Soft(primary_hue="red"), css=custom_css) as demo:
 
-    gr.HTML("""
-        <div class="header-box">
-            <h1>📱 Tableau de bord d'Évaluation & Prédiction d'État de Portables</h1>
-            <p>Estimez l'état d'un téléphone portable à l'aide de notre modèle d'apprentissage automatique.</p>
-        </div>
-    """)
+# ------------------------------------------------------------------
+# Configuration de la page
+# ------------------------------------------------------------------
+st.set_page_config(
+    page_title="Prédiction de l'état d'un portable",
+    page_icon="📱",
+    layout="wide",
+)
 
-    with gr.Tabs():
-        # --- ONGLET 1: PREDICTION INDIVIDUELLE ---
-        with gr.TabItem("📊 Prédiction Unique"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("### 📝 Caractéristiques du Portable")
-                    prix = gr.Number(label="Prix en CFA", value=350)
-                    adresse = gr.Dropdown(choices=adresses_choix, label="Adresse", value=adresses_choix[0])
-                    marque = gr.Dropdown(choices=marques_choix, label="Marque", value=marques_choix[0])
-                    ecran = gr.Number(label="Dimension écran (pouces)", value=6.1)
-                    ram = gr.Number(label="RAM (Go)", value=8)
-                    stockage = gr.Number(label="Stockage (Go)", value=128)
-                    btn_predict = gr.Button("🚀 Lancer la prédiction", variant="primary")
+DESCRIPTION = (
+    "Ce modèle de machine learning permet de prédire l'état d'un portable en partant "
+    "du prix, de l'adresse, de la marque, de la dimension de l'écran, du nombre de RAM "
+    "et du stockage."
+)
 
-                with gr.Column(scale=2):
-                    gr.Markdown("### 📈 Résultat de l'Analyse")
-                    kpi_output = gr.HTML("<p style='text-align:center; color:#5C131D; font-weight:600;'>Remplissez le formulaire et cliquez sur 'Lancer la prédiction'.</p>")
-                    with gr.Row():
-                        plot_output = gr.Plot(label="Répartition & Importance")
-                        table_output = gr.Dataframe(label="Récapitulatif des données & score", interactive=False)
+# Palette de couleurs : rouge foncé + chocolat
+COLOR_DARK_RED = "#7A0C0C"
+COLOR_DARK_RED_2 = "#5C0909"
+COLOR_CHOCOLATE = "#7B3F00"
+COLOR_CHOCOLATE_LIGHT = "#A0522D"
+COLOR_CREAM = "#F5E9DC"
+COLOR_TEXT = "#2E1503"
 
-            btn_predict.click(
-                fn=Pred_func,
-                inputs=[prix, adresse, marque, ecran, ram, stockage],
-                outputs=[kpi_output, plot_output, table_output]
+PALETTE_CAMEMBERT = [
+    COLOR_DARK_RED, COLOR_CHOCOLATE, COLOR_CHOCOLATE_LIGHT,
+    "#B85C38", "#C1440E", "#4A0404", "#8B5A2B",
+]
+
+
+# ------------------------------------------------------------------
+# CSS personnalisé — responsive, rouge foncé / chocolat
+# ------------------------------------------------------------------
+def inject_css():
+    st.markdown(
+        f"""
+        <style>
+        /* ---------- Fond général ---------- */
+        .stApp {{
+            background: linear-gradient(160deg, {COLOR_CREAM} 0%, #EDD9C0 100%);
+        }}
+
+        /* ---------- Titre principal ---------- */
+        .app-header {{
+            background: linear-gradient(120deg, {COLOR_DARK_RED} 0%, {COLOR_CHOCOLATE} 100%);
+            padding: 28px 24px;
+            border-radius: 18px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 6px 18px rgba(90, 30, 10, 0.35);
+            margin-bottom: 24px;
+        }}
+        .app-header h1 {{
+            margin: 0;
+            font-size: clamp(1.4rem, 3vw, 2.2rem);
+            letter-spacing: 0.5px;
+        }}
+        .app-header p {{
+            margin: 8px 0 0 0;
+            font-size: clamp(0.85rem, 1.4vw, 1rem);
+            opacity: 0.92;
+        }}
+
+        /* ---------- Onglets ---------- */
+        .stTabs [data-baseweb="tab-list"] {{
+            gap: 8px;
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            background-color: {COLOR_CREAM};
+            border-radius: 10px 10px 0 0;
+            padding: 10px 18px;
+            color: {COLOR_CHOCOLATE};
+            font-weight: 600;
+            border: 1px solid {COLOR_CHOCOLATE_LIGHT};
+        }}
+        .stTabs [aria-selected="true"] {{
+            background-color: {COLOR_DARK_RED} !important;
+            color: white !important;
+        }}
+
+        /* ---------- Cartes indicateurs (KPI) ---------- */
+        .kpi-container {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin: 18px 0;
+        }}
+        .kpi-card {{
+            flex: 1 1 200px;
+            background: white;
+            border-left: 6px solid {COLOR_DARK_RED};
+            border-radius: 12px;
+            padding: 16px 18px;
+            box-shadow: 0 3px 10px rgba(90, 30, 10, 0.12);
+            transition: transform 0.15s ease;
+        }}
+        .kpi-card:hover {{
+            transform: translateY(-3px);
+        }}
+        .kpi-card .kpi-label {{
+            font-size: 0.85rem;
+            color: {COLOR_CHOCOLATE};
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }}
+        .kpi-card .kpi-value {{
+            font-size: 1.7rem;
+            font-weight: 800;
+            color: {COLOR_DARK_RED_2};
+            margin-top: 4px;
+        }}
+
+        /* ---------- Boutons ---------- */
+        div.stButton > button, button[kind="primary"] {{
+            background: linear-gradient(120deg, {COLOR_DARK_RED} 0%, {COLOR_CHOCOLATE} 100%) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 10px !important;
+            font-weight: 700 !important;
+            padding: 10px 20px !important;
+            box-shadow: 0 4px 10px rgba(90, 30, 10, 0.3);
+        }}
+        div.stButton > button:hover, button[kind="primary"]:hover {{
+            filter: brightness(1.08);
+        }}
+
+        /* ---------- Résultat prédiction ---------- */
+        .result-box {{
+            background: linear-gradient(120deg, {COLOR_CHOCOLATE} 0%, {COLOR_DARK_RED} 100%);
+            color: white;
+            padding: 18px 22px;
+            border-radius: 14px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            text-align: center;
+            box-shadow: 0 5px 14px rgba(90, 30, 10, 0.3);
+            margin: 14px 0;
+        }}
+
+        /* ---------- Tableau des scores ---------- */
+        .score-table thead tr th {{
+            background-color: {COLOR_DARK_RED} !important;
+            color: white !important;
+        }}
+        .score-table tbody tr:nth-child(even) {{
+            background-color: {COLOR_CREAM} !important;
+        }}
+
+        /* ---------- Responsive : petits écrans ---------- */
+        @media (max-width: 640px) {{
+            .kpi-card {{
+                flex: 1 1 100%;
+            }}
+            .app-header {{
+                padding: 18px 14px;
+            }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def kpi_card_html(label, value):
+    return f"""
+    <div class="kpi-card">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-value">{value}</div>
+    </div>
+    """
+
+
+# ------------------------------------------------------------------
+# Chargement des artefacts (mis en cache : chargés une seule fois)
+# ------------------------------------------------------------------
+@st.cache_resource
+def load_artifacts():
+    encoders = jb.load("encoders.joblib")   # encodeurs (adresse, marque)
+    uniques = jb.load("uniques.joblib")     # valeurs uniques
+    scaler = jb.load("scaler.joblib")       # normaliseur
+    xgb = jb.load("xgb_model.joblib")       # modèle
+    return encoders, uniques, scaler, xgb
+
+
+encoders, uniques, scaler, xgb = load_artifacts()
+clasnames = uniques[2]  # noms des classes
+
+
+# ------------------------------------------------------------------
+# Fonction de prédiction simple + scores (probabilités)
+# ------------------------------------------------------------------
+def prepare_input(prix, adresse, marque, dim_ecr, ram, stockage):
+    adresse_enc = encoders[0].transform([adresse])[0]
+    marque_enc = encoders[1].transform([marque])[0]
+    x_new = np.array([prix, adresse_enc, marque_enc, dim_ecr, ram, stockage])
+    x_new = x_new.reshape(1, -1)
+    x_new = scaler.transform(x_new)
+    return x_new
+
+
+def Pred_func(prix, adresse, marque, dim_ecr, ram, stockage):
+    """Prédiction de la classe (compatibilité avec la version d'origine)."""
+    x_new = prepare_input(prix, adresse, marque, dim_ecr, ram, stockage)
+    y_pred = xgb.predict(x_new)
+    return clasnames[y_pred[0]]
+
+
+def Pred_func_with_scores(prix, adresse, marque, dim_ecr, ram, stockage):
+    """Prédiction de la classe + scores (probabilités) par classe."""
+    x_new = prepare_input(prix, adresse, marque, dim_ecr, ram, stockage)
+    y_pred = xgb.predict(x_new)
+    classe = clasnames[y_pred[0]]
+
+    if hasattr(xgb, "predict_proba"):
+        proba = xgb.predict_proba(x_new)[0]
+    else:
+        # Repli si le modèle ne fournit pas de probabilités
+        proba = np.zeros(len(clasnames))
+        proba[y_pred[0]] = 1.0
+
+    scores = {str(clasnames[i]): float(proba[i]) for i in range(len(clasnames))}
+    return classe, scores
+
+
+# ------------------------------------------------------------------
+# Fonction de prédiction multiple (CSV) + scores
+# ------------------------------------------------------------------
+def Pred_func_csv(file):
+    df = pd.read_csv(file)
+    predictions = []
+    scores_rows = []
+
+    for row in df.iloc[:, :].values:
+        classe, scores = Pred_func_with_scores(
+            row[0], row[1], row[2], row[3], row[4], row[5]
+        )
+        predictions.append(classe)
+        scores_rows.append(scores)
+
+    df["etat"] = predictions
+    scores_df = pd.DataFrame(scores_rows)
+    scores_df.columns = [f"score_{c}" for c in scores_df.columns]
+    df_final = pd.concat([df.reset_index(drop=True), scores_df.reset_index(drop=True)], axis=1)
+    return df_final
+
+
+# ------------------------------------------------------------------
+# Interface
+# ------------------------------------------------------------------
+inject_css()
+
+st.markdown(
+    f"""
+    <div class="app-header">
+        <h1>📱 Prédiction de l'état d'un portable</h1>
+        <p>{DESCRIPTION}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+onglet1, onglet2 = st.tabs(["🔎 Prédiction simple", "📂 Prédiction multiple"])
+
+# =====================================================================
+# Onglet 1 — Prédiction simple
+# =====================================================================
+with onglet1:
+    st.subheader("Prédire l'état d'un portable avec une entrée")
+
+    with st.form("formulaire_simple"):
+        col1, col2 = st.columns(2)
+        with col1:
+            prix = st.number_input("Prix", value=0.0, step=1000.0, format="%.2f")
+            adresse = st.selectbox("Adresse", options=list(uniques[0]))
+            marque = st.selectbox("Marque", options=list(uniques[1]))
+        with col2:
+            dim_ecr = st.number_input("Dimension écran", value=0.0, step=0.1, format="%.2f")
+            ram = st.number_input("Nombre de RAM", value=0.0, step=1.0, format="%.2f")
+            stockage = st.number_input("Stockage", value=0.0, step=1.0, format="%.2f")
+
+        soumettre = st.form_submit_button("Prédire", type="primary")
+
+    if soumettre:
+        try:
+            classe, scores = Pred_func_with_scores(
+                prix, adresse, marque, dim_ecr, ram, stockage
             )
 
-        # --- ONGLET 2: PREDICTION PAR LOT (CSV) ---
-        with gr.TabItem("📁 Prédiction Multiple (Batch CSV)"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("### 📤 Importer vos données")
-                    gr.Markdown("Colonnes attendues, dans l'ordre : `prix, adresse, marque, ecran, ram, stockage`")
-                    file_input = gr.File(label="Fichier CSV d'entrée", file_types=[".csv"], type="filepath")
-                    btn_batch = gr.Button("⚙️ Traiter le fichier", variant="primary")
-
-                with gr.Column(scale=2):
-                    gr.Markdown("### 📥 Résultats du traitement")
-                    batch_kpi = gr.HTML()
-                    file_output = gr.File(label="Télécharger le fichier complété")
-                    table_batch = gr.Dataframe(label="Aperçu des 5 premières lignes traitées", interactive=False)
-
-            btn_batch.click(
-                fn=Pred_func_csv,
-                inputs=[file_input],
-                outputs=[file_output, table_batch, batch_kpi]
+            # ---- Résultat principal ----
+            st.markdown(
+                f'<div class="result-box">État prédit : {classe}</div>',
+                unsafe_allow_html=True,
             )
 
-# Lancement de l'application
-if __name__ == "__main__":
-    demo.launch(share=True)
+            # ---- Indicateurs (KPI) ----
+            classe_score = scores.get(classe, 0.0)
+            deuxieme = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            deuxieme_label, deuxieme_val = (deuxieme[1] if len(deuxieme) > 1 else ("—", 0.0))
+
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    {kpi_card_html("Classe prédite", classe)}
+                    {kpi_card_html("Confiance", f"{classe_score*100:.1f}%")}
+                    {kpi_card_html("2ᵉ classe possible", deuxieme_label)}
+                    {kpi_card_html("Nb. classes", len(scores))}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col_graph, col_table = st.columns([1, 1])
+
+            # ---- Graphique camembert ----
+            with col_graph:
+                fig = px.pie(
+                    names=list(scores.keys()),
+                    values=list(scores.values()),
+                    color_discrete_sequence=PALETTE_CAMEMBERT,
+                    hole=0.35,
+                    title="Répartition des scores par classe",
+                )
+                fig.update_traces(textposition="inside", textinfo="percent+label")
+                fig.update_layout(
+                    font_color=COLOR_TEXT,
+                    title_font_color=COLOR_DARK_RED_2,
+                    legend_title_text="Classes",
+                    margin=dict(t=60, b=10, l=10, r=10),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # ---- Tableau des scores ----
+            with col_table:
+                st.markdown("**Tableau des scores par classe**")
+                scores_df = (
+                    pd.DataFrame(
+                        {"Classe": list(scores.keys()), "Score": list(scores.values())}
+                    )
+                    .sort_values("Score", ascending=False)
+                    .reset_index(drop=True)
+                )
+                scores_df["Score (%)"] = (scores_df["Score"] * 100).round(2)
+
+                st.dataframe(
+                    scores_df[["Classe", "Score (%)"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        except Exception as e:
+            st.error(f"Erreur lors de la prédiction : {e}")
+
+# =====================================================================
+# Onglet 2 — Prédiction multiple
+# =====================================================================
+with onglet2:
+    st.subheader("Prédire l'état d'un portable avec plusieurs entrées")
+    st.caption(
+        "Le fichier CSV doit contenir, dans cet ordre, les colonnes : "
+        "prix, adresse, marque, dimension écran, RAM, stockage."
+    )
+
+    fichier = st.file_uploader("Importer un fichier CSV", type=["csv"])
+
+    if fichier is not None:
+        try:
+            with st.spinner("Prédictions en cours…"):
+                df_resultat = Pred_func_csv(fichier)
+
+            nb_lignes = len(df_resultat)
+            classe_majoritaire = df_resultat["etat"].mode().iloc[0]
+            nb_classes_distinctes = df_resultat["etat"].nunique()
+            score_cols = [c for c in df_resultat.columns if c.startswith("score_")]
+            confiance_moy = (
+                df_resultat.apply(
+                    lambda r: r[f"score_{r['etat']}"] if f"score_{r['etat']}" in df_resultat.columns else np.nan,
+                    axis=1,
+                ).mean()
+                * 100
+            )
+
+            # ---- Indicateurs (KPI) ----
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    {kpi_card_html("Prédictions réalisées", nb_lignes)}
+                    {kpi_card_html("État majoritaire", classe_majoritaire)}
+                    {kpi_card_html("États distincts", nb_classes_distinctes)}
+                    {kpi_card_html("Confiance moyenne", f"{confiance_moy:.1f}%")}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col_graph, col_table = st.columns([1, 1])
+
+            # ---- Graphique camembert : répartition des états ----
+            with col_graph:
+                repartition = df_resultat["etat"].value_counts().reset_index()
+                repartition.columns = ["etat", "count"]
+                fig2 = px.pie(
+                    repartition,
+                    names="etat",
+                    values="count",
+                    color_discrete_sequence=PALETTE_CAMEMBERT,
+                    hole=0.35,
+                    title="Répartition des états prédits",
+                )
+                fig2.update_traces(textposition="inside", textinfo="percent+label")
+                fig2.update_layout(
+                    font_color=COLOR_TEXT,
+                    title_font_color=COLOR_DARK_RED_2,
+                    legend_title_text="État",
+                    margin=dict(t=60, b=10, l=10, r=10),
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # ---- Tableau récapitulatif des scores moyens par classe ----
+            with col_table:
+                st.markdown("**Score moyen par classe (toutes lignes)**")
+                if score_cols:
+                    moyennes = df_resultat[score_cols].mean().sort_values(ascending=False)
+                    moyennes_df = pd.DataFrame(
+                        {
+                            "Classe": [c.replace("score_", "") for c in moyennes.index],
+                            "Score moyen (%)": (moyennes.values * 100).round(2),
+                        }
+                    )
+                    st.dataframe(
+                        moyennes_df, use_container_width=True, hide_index=True
+                    )
+
+            st.markdown("---")
+            st.markdown("**Détail ligne par ligne (données + état + scores)**")
+            st.dataframe(df_resultat, use_container_width=True)
+
+            st.download_button(
+                label="⬇️ Télécharger le fichier CSV",
+                data=df_resultat.to_csv(index=False).encode("utf-8"),
+                file_name="predictions.csv",
+                mime="text/csv",
+                type="primary",
+            )
+        except Exception as e:
+            st.error(f"Erreur lors du traitement du fichier : {e}")
+
